@@ -1,7 +1,5 @@
-import { PrismaClient } from '@prisma/client';
+import { prisma } from '../lib/prisma';
 import { getSmsProvider } from '../providers';
-
-const prisma = new PrismaClient();
 const smsProvider = getSmsProvider();
 
 const MAX_RETRIES = 3;
