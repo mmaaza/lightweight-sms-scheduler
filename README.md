@@ -8,7 +8,7 @@ This service allows you to schedule SMS messages to be sent at a specific time i
 
 - **No Redis/BullMQ Required**: Uses a database-backed polling engine with Optimistic Locking, making it lightweight and easy to host.
 - **Horizontally Scalable**: Run multiple instances of this service safely. The optimistic locking ensures a message is never sent twice.
-- **Database Agnostic**: Powered by Prisma. Works out-of-the-box with SQLite for zero-setup testing, but easily configurable for PostgreSQL or MySQL in production.
+- **Database Agnostic**: Powered by Prisma. Configured for PostgreSQL out-of-the-box, but easily configurable for MySQL or SQLite.
 - **Automatic Retries**: Built-in exponential backoff (1 min, 2 mins, 4 mins) for failed SMS deliveries.
 - **Provider Agnostic**: Easily swap between different SMS providers (Twilio, MessageBird, generic webhooks) via environment variables. Includes a `MockProvider` for cost-free testing.
 
@@ -22,7 +22,7 @@ This service allows you to schedule SMS messages to be sent at a specific time i
 ### 1. Clone and Install
 
 ```bash
-git clone <your-repo-url>
+git clone https://github.com/mmaaza/lightweight-sms-scheduler.git
 cd sms-scheduler
 npm install
 ```
@@ -33,19 +33,19 @@ Create a `.env` file in the root directory (or modify the existing one):
 
 ```env
 PORT=3000
-DATABASE_URL="file:./dev.db" # Change to postgresql://... for production
+DATABASE_URL="postgresql://postgres:postgres@localhost:5432/sms_scheduler?schema=public"
 SMS_PROVIDER="mock"          # Options: mock, webhook
 ```
 
 ### 3. Database Setup
 
-Initialize the database schema:
+Initialize the database schema (make sure your PostgreSQL server is running):
 
 ```bash
 npx prisma db push
 ```
 
-*(Note: If you switch to PostgreSQL/MySQL, you should use `npx prisma migrate dev` instead).*
+*(Note: For production, you should use `npx prisma migrate dev` instead).*
 
 ### 4. Run the Server
 
@@ -152,12 +152,136 @@ To allow you to run multiple instances of this server (e.g., behind a load balan
 When an instance finds a due job, it attempts to update the status to `PROCESSING` using a strict `WHERE id = X AND status = 'PENDING'` clause. If another instance already grabbed the job, the update will affect 0 rows, and the current instance will safely skip it.
 
 ### Changing the Database
-To switch from SQLite to PostgreSQL for production:
+To switch from PostgreSQL to SQLite for local testing:
 1. Open `prisma/schema.prisma`.
-2. Change `provider = "sqlite"` to `provider = "postgresql"`.
-3. Update `DATABASE_URL` in your `.env` to your Postgres connection string.
-4. Run `npx prisma migrate dev --name init`.
+2. Change `provider = "postgresql"` to `provider = "sqlite"`.
+3. Update `DATABASE_URL` in your `.env` to `"file:./dev.db"`.
+4. Run `npx prisma db push`.
 
 ## License
 
 MIT
+
+---
+
+## Detailed Testing Guide
+
+This guide will walk you through testing the core functionality of the SMS Scheduler using `curl` (or you can use Postman/Insomnia).
+
+### 1. Start the Server
+Ensure your database is running, your `.env` is configured, and start the server:
+```bash
+npm run dev
+```
+You should see:
+```
+Server is running on port 3000
+Scheduler started...
+```
+
+### 2. Schedule a Message
+Let's schedule a message to be sent 1 minute from now.
+
+**Request:**
+```bash
+curl -X POST http://localhost:3000/api/messages/schedule \
+-H "Content-Type: application/json" \
+-d '{
+  "to": "+1234567890",
+  "body": "Test message from curl",
+  "scheduledAt": "2026-02-26T10:01:00.000Z" 
+}'
+```
+*(Note: Replace `scheduledAt` with a time about 1 minute in the future from your current time).*
+
+**Expected Response:**
+```json
+{
+  "message": "Message scheduled successfully",
+  "job": {
+    "id": "some-uuid",
+    "status": "PENDING",
+    ...
+  }
+}
+```
+*Copy the `id` from the response for the next steps.*
+
+### 3. Check the Status
+Before the scheduled time arrives, check the status of your message.
+
+**Request:**
+```bash
+curl http://localhost:3000/api/messages/<YOUR_JOB_ID>
+```
+
+**Expected Response:**
+```json
+{
+  "job": {
+    "id": "some-uuid",
+    "status": "PENDING",
+    ...
+  }
+}
+```
+
+### 4. Wait for the Scheduler
+Wait for the `scheduledAt` time to pass. Watch your terminal running the server. Because we are using the `MockProvider`, you should see logs like:
+```
+[MockProvider] Sending SMS to +1234567890: "Test message from curl"
+[MockProvider] Successfully sent SMS to +1234567890
+```
+*(Note: The MockProvider has a 10% chance to fail to demonstrate the retry logic. If it fails, you will see a failure log and it will retry in 1 minute).*
+
+### 5. Verify it was Sent
+Check the status again using the same command from Step 3.
+
+**Expected Response:**
+```json
+{
+  "job": {
+    "id": "some-uuid",
+    "status": "SENT",
+    ...
+  }
+}
+```
+
+### 6. Test Cancellation
+Schedule another message far in the future, then cancel it.
+
+**Schedule:**
+```bash
+curl -X POST http://localhost:3000/api/messages/schedule \
+-H "Content-Type: application/json" \
+-d '{
+  "to": "+1999999999",
+  "body": "Cancel me",
+  "scheduledAt": "2030-01-01T00:00:00.000Z" 
+}'
+```
+
+**Cancel (using the new ID):**
+```bash
+curl -X DELETE http://localhost:3000/api/messages/<NEW_JOB_ID>
+```
+
+**Expected Response:**
+```json
+{
+  "message": "Message cancelled successfully"
+}
+```
+
+### 7. View All Jobs (Testing Endpoint)
+To see all jobs currently in the database:
+```bash
+curl http://localhost:3000/api/testing/jobs
+```
+
+### 8. Clear Database (Testing Endpoint)
+To wipe all jobs and start fresh:
+```bash
+curl -X DELETE http://localhost:3000/api/testing/jobs
+```
