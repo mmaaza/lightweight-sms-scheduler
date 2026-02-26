@@ -29,13 +29,25 @@ npm install
 
 ### 2. Configuration
 
-Create a `.env` file in the root directory (or modify the existing one):
+1. Copy the example environment file:
+   ```bash
+   cp .env.example .env
+   ```
 
-```env
-PORT=3000
-DATABASE_URL="postgresql://postgres:postgres@localhost:5432/sms_scheduler?schema=public"
-SMS_PROVIDER="mock"          # Options: mock, webhook
-```
+2. Edit `.env` to configure your database and SMS provider:
+
+   ```env
+   PORT=3000
+   DATABASE_URL="postgresql://user:password@localhost:5432/sms_scheduler?schema=public"
+   
+   # Choose your provider: "mock", "api", or "webhook"
+   SMS_PROVIDER="mock" 
+   ```
+
+   **Using a Real SMS API (Generic):**
+   To usage a real SMS provider (Twilio, Nexmo etc.), set `SMS_PROVIDER="api"` and configure the template variables in `.env`. 
+   
+   See `.env.example` for detailed configuration examples for different API types (JSON, Form Data, GET params).
 
 ### 3. Database Setup
 
